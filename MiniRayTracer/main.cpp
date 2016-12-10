@@ -6,10 +6,11 @@
 #define UNIT_PER_PIXEL 0.001
 #define PI 3.14159265
 #define EPS 0.0001
+#define REFLECTION_COUNT 2
 
 struct Color { unsigned char r, g, b; };
 struct Vec3d { double x, y, z; };
-struct Sphere { Vec3d pos; double r; Color c; double shineness; }; //Information about the color, position and size of a sphere
+struct Sphere { Vec3d pos; double r; Color c; double shineness; double reflection; }; //Information about the color, position and size of a sphere
 struct Ray { Vec3d pos, dir; }; //A ray shooting from 'pos' with direction vector 'dir'
 const double ambient = 0.2; //Ambient color intensity
 const char *title = "Mini Ray Tracer (by Bicheng LUO, Tsinghua University)"; // Title of the window
@@ -82,10 +83,10 @@ bool reflect_color(const std::vector<Sphere*> &scene, const Vec3d &light, const 
 		}
 
 		double diffuse_r = MAX(dot(normalize(light_ray.dir), normal_r), 0); //Calculate the diffuse color intensity
-		*reflection_ray = Ray{ its_r, reflect(ray.dir, normal_r) };
 		double specular_r = pow(MAX(dot(normalize(negative(reflect(light_ray.dir, normal_r))), normalize(negative(ray.dir))), 0), 20 * hit_r->shineness);
 		double intensity_r = (is_shadow ? diffuse_r / 3.0 : diffuse_r + specular_r) + ambient; //Decrease the color intensity for the pixels in shadow
 		*reflect_color = Color{ MIN(hit_r->c.b * intensity_r, 255), MIN(hit_r->c.g * intensity_r, 255), MIN(hit_r->c.r * intensity_r, 255) };
+		*reflection_ray = Ray{ its_r, reflect(ray.dir, normal_r) };
 		return true;
 	}
 	return false;
@@ -96,9 +97,9 @@ int WINAPI WinMain(HINSTANCE hinst, HINSTANCE, LPSTR, int) {
 	cv::Mat canvas(HEIGHT, WIDTH, CV_8UC3, cv::Scalar(0, 0, 0));
 	Vec3d light{10, 10, 10};
 	std::vector<Sphere*> scene;
-	scene.push_back(new Sphere{ Vec3d{ 0, 0, 0 }, 0.5, Color{ 100, 255, 100 }, 0.5 }); //Add a green sphere
-	scene.push_back(new Sphere{ Vec3d{ 0, 0.8, 0.8 }, 0.2, Color{ 255, 100, 100 }, 0.3 }); //Add a red and small sphere
-	scene.push_back(new Sphere{ Vec3d{ 0.8, 0.8, 0 }, 0.3, Color{ 100, 100, 255 }, 0.3 }); //Add a blue and small sphere
+	scene.push_back(new Sphere{ Vec3d{ 0, 0, 0 }, 0.5, Color{ 50, 125, 50 }, 0.3, 6 }); //Add a green sphere
+	scene.push_back(new Sphere{ Vec3d{ 0, 0.8, 0.8 }, 0.2, Color{ 255, 100, 100 }, 0.3, 0.1 }); //Add a red and small sphere
+	scene.push_back(new Sphere{ Vec3d{ 0.8, 0.8, 0 }, 0.3, Color{ 100, 100, 255 }, 0.3, 0.1 }); //Add a blue and small sphere
 	int frame = 0;
 	while (true) { //The main loop
 		canvas.setTo(cv::Scalar(0, 0, 0)); //Clear the canvas
@@ -115,22 +116,23 @@ int WINAPI WinMain(HINSTANCE hinst, HINSTANCE, LPSTR, int) {
 				double pix_x = (j - HEIGHT / 2.0) * UNIT_PER_PIXEL;
 
 				Ray ray{ Vec3d{ 0, 0, 5 }, Vec3d{ pix_x, pix_y, -1 } }; //Cast each pixel to the specific ray
-				Ray reflection_ray;
-				Color hit_color{ 0, 0, 0 };
-				Sphere *hit;
-				if (reflect_color(scene, light, ray, &hit_color, &reflection_ray, &hit)) {
-					Ray reflection_ray2;
-					Color hit_color2{ 0, 0, 0 };
-					Sphere *hit2;
-					reflect_color(scene, light, reflection_ray, &hit_color2, &reflection_ray2, &hit2);
-					hit_color.r = (hit_color.r + hit->shineness * hit_color2.r) / (1 + hit->shineness);
-					hit_color.g = (hit_color.g + hit->shineness * hit_color2.g) / (1 + hit->shineness);
-					hit_color.b = (hit_color.b + hit->shineness * hit_color2.b) / (1 + hit->shineness);
+				
+				Color hit_color[REFLECTION_COUNT];
+				double hit_color_weight[REFLECTION_COUNT];
+				double total_hit_color_weight = 0;
+				memset(hit_color_weight, 0, sizeof(double)*REFLECTION_COUNT);
+				Sphere *hit[REFLECTION_COUNT];
+				for (int k = 0; k < REFLECTION_COUNT; k++) {
+					if (!reflect_color(scene, light, ray, &hit_color[k], &ray, &hit[k]))
+						break;
+					hit_color_weight[k] = k == 0 ? 1 : hit_color_weight[k - 1] * hit[k - 1]->reflection;
+					total_hit_color_weight += hit_color_weight[k];
 				}
-
-				ptr[3 * i] = hit_color.b;
-				ptr[3 * i + 1] = hit_color.g;
-				ptr[3 * i + 2] = hit_color.r;
+				for (int k = 0; k < REFLECTION_COUNT; k++) {
+					ptr[3 * i] += hit_color[k].b * hit_color_weight[k] / total_hit_color_weight;
+					ptr[3 * i + 1] += hit_color[k].g * hit_color_weight[k] / total_hit_color_weight;
+					ptr[3 * i + 2] += hit_color[k].r * hit_color_weight[k] / total_hit_color_weight;
+				}
 			}
 		}
 		cv::imshow(title, canvas); //Show the canvas in the window
